@@ -6,6 +6,24 @@ __pycache__/
 # C extensions
 *.so
 
+# Saved model
+save/
+
+# Datasets
+t2m/
+kit/
+assets/actionrecognition/
+body_models/smpl/
+dataset/HumanML3D/
+glove/
+model/deps/
+
+# Testing
+testing/
+
+# zip files
+*.zip
+
 # Distribution / packaging
 .Python
 build/
