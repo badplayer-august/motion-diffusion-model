@@ -93,6 +93,9 @@ def add_model_options(parser):
     group.add_argument("--unconstrained", action='store_true',
                        help="Model is trained unconditionally. That is, it is constrained by neither text nor action. "
                             "Currently tested on HumanAct12 only.")
+    group.add_argument("--encode_type", default='clip',
+                       choices=['clip', 'bert'], type=str,
+                       help="Text encoder type.")
 
 
 

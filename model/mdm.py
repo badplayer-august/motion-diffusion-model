@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import clip
+from model.distilbert_interface import DistilbertEncoder
 from model.rotation2xyz import Rotation2xyz
 
 
@@ -10,7 +11,7 @@ from model.rotation2xyz import Rotation2xyz
 class MDM(nn.Module):
     def __init__(self, modeltype, njoints, nfeats, num_actions, translation, pose_rep, glob, glob_rot,
                  latent_dim=256, ff_size=1024, num_layers=8, num_heads=4, dropout=0.1,
-                 ablation=None, activation="gelu", legacy=False, data_rep='rot6d', dataset='amass', clip_dim=512,
+                 ablation=None, activation="gelu", legacy=False, data_rep='rot6d', dataset='amass', encode_type='clip', clip_dim=512,
                  arch='trans_enc', emb_trans_dec=False, clip_version=None, **kargs):
         super().__init__()
 
@@ -52,6 +53,10 @@ class MDM(nn.Module):
         self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
         self.emb_trans_dec = emb_trans_dec
 
+        # Dirty code: 2023/05/15
+        self.encode_type = encode_type
+
+
         if self.arch == 'trans_enc':
             print("TRANS_ENC init")
             seqTransEncoderLayer = nn.TransformerEncoderLayer(d_model=self.latent_dim,
@@ -81,11 +86,21 @@ class MDM(nn.Module):
 
         if self.cond_mode != 'no_cond':
             if 'text' in self.cond_mode:
-                self.embed_text = nn.Linear(self.clip_dim, self.latent_dim)
                 print('EMBED TEXT')
-                print('Loading CLIP...')
-                self.clip_version = clip_version
-                self.clip_model = self.load_and_freeze_clip(clip_version)
+                if self.encode_type == 'clip':
+                    self.embed_text = nn.Linear(self.clip_dim, self.latent_dim)
+                    print('Loading CLIP...')
+                    self.clip_version = clip_version
+                    self.clip_model = self.load_and_freeze_clip(clip_version)
+                elif self.encode_type == 'bert':
+                    print('Loading DISTILBERT...')
+                    self.model_path = 'model/deps/distilbert-base-uncased'
+                    self.bert_model = self.load_and_freeze_bert(self.model_path)
+                    bert_dim = self.bert_model.text_model.config.hidden_size
+                    max_text_len = 20
+                    self.seq_embed_text = nn.Linear(max_text_len, 1)
+                    self.embed_text = nn.Sequential(nn.ReLU(),
+                                        nn.Linear(bert_dim, latent_dim))
             if 'action' in self.cond_mode:
                 self.embed_action = EmbedAction(self.num_actions, self.latent_dim)
                 print('EMBED ACTION')
@@ -97,6 +112,10 @@ class MDM(nn.Module):
 
     def parameters_wo_clip(self):
         return [p for name, p in self.named_parameters() if not name.startswith('clip_model.')]
+
+    def load_and_freeze_bert(self, model_path):
+        bert_model = DistilbertEncoder(model_path)#.to('cpu')
+        return bert_model
 
     def load_and_freeze_clip(self, clip_version):
         clip_model, clip_preprocess = clip.load(clip_version, device='cpu',
@@ -111,7 +130,17 @@ class MDM(nn.Module):
 
         return clip_model
 
-    def mask_cond(self, cond, force_mask=False):
+    def bert_mask_cond(self, cond, force_mask=False):
+        bs, d1, d2 = cond.shape
+        if force_mask:
+            return torch.zeros_like(cond)
+        elif self.training and self.cond_mask_prob > 0.:
+            mask = torch.bernoulli(torch.ones(bs, device=cond.device) * self.cond_mask_prob).view(bs, 1, 1)  # 1-> use null_cond, 0-> use real cond
+            return cond * (1. - mask)
+        else:
+            return cond
+
+    def clip_mask_cond(self, cond, force_mask=False):
         bs, d = cond.shape
         if force_mask:
             return torch.zeros_like(cond)
@@ -121,7 +150,13 @@ class MDM(nn.Module):
         else:
             return cond
 
-    def encode_text(self, raw_text):
+    def bert_encode_text(self, raw_text):
+        # raw_text - list (batch_size length) of strings with input text prompts
+        # device = next(self.parameters()).device
+        max_text_len = 20 # if self.dataset in ['humanml', 'kit'] else None  # Specific hardcoding for humanml dataset
+        return self.bert_model(raw_text, max_text_len).float()
+
+    def clip_encode_text(self, raw_text):
         # raw_text - list (batch_size length) of strings with input text prompts
         device = next(self.parameters()).device
         max_text_len = 20 if self.dataset in ['humanml', 'kit'] else None  # Specific hardcoding for humanml dataset
@@ -136,6 +171,7 @@ class MDM(nn.Module):
             # print('texts after pad', texts.shape, texts)
         else:
             texts = clip.tokenize(raw_text, truncate=True).to(device) # [bs, context_length] # if n_tokens > 77 -> will truncate
+        
         return self.clip_model.encode_text(texts).float()
 
     def forward(self, x, timesteps, y=None):
@@ -148,11 +184,20 @@ class MDM(nn.Module):
 
         force_mask = y.get('uncond', False)
         if 'text' in self.cond_mode:
-            enc_text = self.encode_text(y['text'])
-            emb += self.embed_text(self.mask_cond(enc_text, force_mask=force_mask))
+            if self.encode_type == 'clip':
+              enc_text = self.clip_encode_text(y['text'])
+              emb += self.embed_text(self.clip_mask_cond(enc_text, force_mask=force_mask))
+            elif self.encode_type == 'bert':
+              enc_text = self.bert_encode_text(y['text'])
+              emb_text = self.embed_text(self.bert_mask_cond(enc_text, force_mask=force_mask))
+              emb_text = emb_text.transpose(2, 1)
+              emb_text = self.seq_embed_text(emb_text)
+              emb_text = emb_text.squeeze()
+
+              emb += emb_text
         if 'action' in self.cond_mode:
             action_emb = self.embed_action(y['action'])
-            emb += self.mask_cond(action_emb, force_mask=force_mask)
+            emb += self.clip_mask_cond(action_emb, force_mask=force_mask)
 
         if self.arch == 'gru':
             x_reshaped = x.reshape(bs, njoints*nfeats, 1, nframes)
