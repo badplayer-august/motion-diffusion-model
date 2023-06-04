@@ -35,7 +35,7 @@ def plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=(3
         ax.set_ylim3d([0, radius])
         ax.set_zlim3d([-radius / 3., radius * 2 / 3.])
         # print(title)
-        fig.suptitle(title, fontsize=10)
+        fig.suptitle(title, fontsize=10, y=0.8)
         ax.grid(b=False)
 
     def plot_xzPlane(minx, maxx, miny, minz, maxz):

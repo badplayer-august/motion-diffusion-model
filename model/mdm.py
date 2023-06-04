@@ -53,7 +53,6 @@ class MDM(nn.Module):
         self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
         self.emb_trans_dec = emb_trans_dec
 
-        # Dirty code: 2023/05/15
         self.encode_type = encode_type
 
 
@@ -92,6 +91,7 @@ class MDM(nn.Module):
                     print('Loading CLIP...')
                     self.clip_version = clip_version
                     self.clip_model = self.load_and_freeze_clip(clip_version)
+                    self.encode_text = self.clip_encode_text
                 elif self.encode_type == 'bert':
                     print('Loading DISTILBERT...')
                     self.model_path = 'model/deps/distilbert-base-uncased'
@@ -101,6 +101,7 @@ class MDM(nn.Module):
                     self.seq_embed_text = nn.Linear(max_text_len, 1)
                     self.embed_text = nn.Sequential(nn.ReLU(),
                                         nn.Linear(bert_dim, latent_dim))
+                    self.encode_text = self.bert_encode_text
             if 'action' in self.cond_mode:
                 self.embed_action = EmbedAction(self.num_actions, self.latent_dim)
                 print('EMBED ACTION')
@@ -150,13 +151,18 @@ class MDM(nn.Module):
         else:
             return cond
 
-    def bert_encode_text(self, raw_text):
+    def bert_encode_text(self, raw_text, force_mask):
         # raw_text - list (batch_size length) of strings with input text prompts
         # device = next(self.parameters()).device
         max_text_len = 20 # if self.dataset in ['humanml', 'kit'] else None  # Specific hardcoding for humanml dataset
-        return self.bert_model(raw_text, max_text_len).float()
+        enc_text = self.bert_model(raw_text, max_text_len).float()
+        emb_text = self.embed_text(self.bert_mask_cond(enc_text, force_mask=force_mask))
+        emb_text = emb_text.transpose(2, 1)
+        emb_text = self.seq_embed_text(emb_text)
+        emb_text = emb_text.squeeze()
+        return emb_text
 
-    def clip_encode_text(self, raw_text):
+    def clip_encode_text(self, raw_text, force_mask):
         # raw_text - list (batch_size length) of strings with input text prompts
         device = next(self.parameters()).device
         max_text_len = 20 if self.dataset in ['humanml', 'kit'] else None  # Specific hardcoding for humanml dataset
@@ -172,9 +178,11 @@ class MDM(nn.Module):
         else:
             texts = clip.tokenize(raw_text, truncate=True).to(device) # [bs, context_length] # if n_tokens > 77 -> will truncate
         
-        return self.clip_model.encode_text(texts).float()
+        enc_text = self.clip_model.encode_text(texts).float()
+        return self.embed_text(self.clip_mask_cond(enc_text, force_mask=force_mask))
 
-    def forward(self, x, timesteps, y=None):
+
+    def forward(self, x, timesteps, y=None, interpolate_rate=None):
         """
         x: [batch_size, njoints, nfeats, max_frames], denoted x_t in the paper
         timesteps: [batch_size] (int)
@@ -184,17 +192,14 @@ class MDM(nn.Module):
 
         force_mask = y.get('uncond', False)
         if 'text' in self.cond_mode:
-            if self.encode_type == 'clip':
-              enc_text = self.clip_encode_text(y['text'])
-              emb += self.embed_text(self.clip_mask_cond(enc_text, force_mask=force_mask))
-            elif self.encode_type == 'bert':
-              enc_text = self.bert_encode_text(y['text'])
-              emb_text = self.embed_text(self.bert_mask_cond(enc_text, force_mask=force_mask))
-              emb_text = emb_text.transpose(2, 1)
-              emb_text = self.seq_embed_text(emb_text)
-              emb_text = emb_text.squeeze()
+            if interpolate_rate != None and force_mask == False:
+              encoding_1 = self.encode_text(y['text'], force_mask)
+              encoding_2 = self.encode_text(y['text2'], force_mask)
+              latent_emb = encoding_1 + (encoding_2 - encoding_1)*interpolate_rate
+              emb += latent_emb
+            else:
+              emb += self.encode_text(y['text'], force_mask)
 
-              emb += emb_text
         if 'action' in self.cond_mode:
             action_emb = self.embed_action(y['action'])
             emb += self.clip_mask_cond(action_emb, force_mask=force_mask)

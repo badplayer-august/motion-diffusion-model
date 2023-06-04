@@ -234,6 +234,12 @@ python -m sample.generate --model_path ./save/humanml_trans_enc_512/model0002000
 ```shell
 python -m sample.generate --model_path ./save/humanml_trans_enc_512/model000200000.pt --text_prompt "the person walked forward and is picking up his toolbox."
 ```
+
+### Generate from two prompt(latent space walk through)
+
+```shell
+python -m sample.generate --model_path ./save/humanml_trans_enc_512/model000200000.pt --text_prompt "the person walked forward and is picking up his toolbox." --text_prompt2 "the person is sitting on the ground."
+```
 </details>
 
 <details>
@@ -273,6 +279,7 @@ By abuse of notation, (num_samples * num_repetitions) samples are created, and a
 * `--device` id.
 * `--seed` to sample different prompts.
 * `--motion_length` (text-to-motion only) in seconds (maximum is 9.8[sec]).
+* `--encode_type` clip or bert.
 
 **Running those will get you:**
 
@@ -381,6 +388,7 @@ python -m train.train_mdm --save_dir save/my_name --dataset humanact12 --cond_ma
 * Add `--train_platform_type {ClearmlPlatform, TensorboardPlatform}` to track results with either [ClearML](https://clear.ml/) or [Tensorboard](https://www.tensorflow.org/tensorboard).
 * Add `--eval_during_training` to run a short (90 minutes) evaluation for each saved checkpoint. 
   This will slow down training but will give you better monitoring.
+* Use `--encode_type` to define text encode model.
 
 ## Evaluate
 

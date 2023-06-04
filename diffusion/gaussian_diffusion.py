@@ -275,7 +275,7 @@ class GaussianDiffusion:
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
     def p_mean_variance(
-        self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None
+        self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None, interpolate_rate=None,
     ):
         """
         Apply the model to get p(x_{t-1} | x_t), as well as a prediction of
@@ -302,7 +302,7 @@ class GaussianDiffusion:
 
         B, C = x.shape[:2]
         assert t.shape == (B,)
-        model_output = model(x, self._scale_timesteps(t), **model_kwargs)
+        model_output = model(x, self._scale_timesteps(t), interpolate_rate=interpolate_rate, **model_kwargs)
 
         if 'inpainting_mask' in model_kwargs['y'].keys() and 'inpainted_motion' in model_kwargs['y'].keys():
             inpainting_mask, inpainted_motion = model_kwargs['y']['inpainting_mask'], model_kwargs['y']['inpainted_motion']
@@ -503,6 +503,7 @@ class GaussianDiffusion:
         cond_fn=None,
         model_kwargs=None,
         const_noise=False,
+        interpolate_rate=None,
     ):
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -528,6 +529,7 @@ class GaussianDiffusion:
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
+            interpolate_rate=interpolate_rate,
         )
         noise = th.randn_like(x)
         # print('const_noise', const_noise)
@@ -556,6 +558,8 @@ class GaussianDiffusion:
         denoised_fn=None,
         cond_fn=None,
         model_kwargs=None,
+        const_noise=False,
+        interpolate_rate=None,
     ):
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -583,6 +587,7 @@ class GaussianDiffusion:
                 clip_denoised=clip_denoised,
                 denoised_fn=denoised_fn,
                 model_kwargs=model_kwargs,
+                interpolate_rate=interpolate_rate,
             )
             noise = th.randn_like(x)
             nonzero_mask = (
@@ -612,6 +617,7 @@ class GaussianDiffusion:
         cond_fn_with_grad=False,
         dump_steps=None,
         const_noise=False,
+        interpolate_rate=None,
     ):
         """
         Generate samples from the model.
@@ -652,6 +658,7 @@ class GaussianDiffusion:
             randomize_class=randomize_class,
             cond_fn_with_grad=cond_fn_with_grad,
             const_noise=const_noise,
+            interpolate_rate=interpolate_rate,
         )):
             if dump_steps is not None and i in dump_steps:
                 dump.append(deepcopy(sample["sample"]))
@@ -676,6 +683,7 @@ class GaussianDiffusion:
         randomize_class=False,
         cond_fn_with_grad=False,
         const_noise=False,
+        interpolate_rate=None,
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -725,6 +733,7 @@ class GaussianDiffusion:
                     cond_fn=cond_fn,
                     model_kwargs=model_kwargs,
                     const_noise=const_noise,
+                    interpolate_rate=interpolate_rate,
                 )
                 yield out
                 img = out["sample"]

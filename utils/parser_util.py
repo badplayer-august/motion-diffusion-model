@@ -170,6 +170,10 @@ def add_generate_options(parser):
                             "If no file is specified, will take action names from dataset.")
     group.add_argument("--text_prompt", default='', type=str,
                        help="A text prompt to be generated. If empty, will take text prompts from dataset.")
+    group.add_argument("--text_prompt2", default='', type=str,
+                       help="Second text prompt to be generated. If empty, will take text prompts from dataset.")
+    group.add_argument("--interpolate_num", default=11, type=int,
+                       help="The interpolate number between two text encodings for latent space walking.")
     group.add_argument("--action_name", default='', type=str,
                        help="An action name to be generated. If empty, will take text prompts from dataset.")
 

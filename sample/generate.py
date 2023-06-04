@@ -34,7 +34,12 @@ def main():
         out_path = os.path.join(os.path.dirname(args.model_path),
                                 'samples_{}_{}_seed{}'.format(name, niter, args.seed))
         if args.text_prompt != '':
+            if args.text_prompt2 != '':
+                out_path += '_from'
             out_path += '_' + args.text_prompt.replace(' ', '_').replace('.', '')
+            if args.text_prompt2 != '':
+                out_path += '_to'
+                out_path += '_' + args.text_prompt2.replace(' ', '_').replace('.', '')
         elif args.input_text != '':
             out_path += '_' + os.path.basename(args.input_text).replace('.txt', '').replace(' ', '_').replace('.', '')
 
@@ -42,6 +47,11 @@ def main():
     if args.text_prompt != '':
         texts = [args.text_prompt]
         args.num_samples = 1
+        if args.text_prompt2 != '':
+            texts2 = [args.text_prompt2]
+            assert args.interpolate_num >= 2, \
+                'The minimum of interpolate_num should be 2.'
+            args.num_repetitions = args.interpolate_num
     elif args.input_text != '':
         assert os.path.exists(args.input_text)
         with open(args.input_text, 'r') as fr:
@@ -90,7 +100,10 @@ def main():
         is_t2m = any([args.input_text, args.text_prompt])
         if is_t2m:
             # t2m
-            collate_args = [dict(arg, text=txt) for arg, txt in zip(collate_args, texts)]
+            if args.text_prompt2 != '':
+                collate_args = [dict(arg, text=txt, text2=txt2) for arg, txt, txt2 in zip(collate_args, texts, texts2)]
+            else:
+                collate_args = [dict(arg, text=txt) for arg, txt in zip(collate_args, texts)]
         else:
             # a2m
             action = data.dataset.action_name_to_action(action_text)
@@ -103,7 +116,12 @@ def main():
     all_text = []
 
     for rep_i in range(args.num_repetitions):
-        print(f'### Sampling [repetitions #{rep_i}]')
+        if args.text_prompt2 != '':
+            print(f'### Sampling [interpolate #{rep_i}]')
+            interpolate_rate = rep_i/(args.num_repetitions - 1)
+        else:
+            print(f'### Sampling [repetitions #{rep_i}]')
+            interpolate_rate = None
 
         # add CFG scale to batch
         if args.guidance_param != 1:
@@ -122,6 +140,7 @@ def main():
             dump_steps=None,
             noise=None,
             const_noise=False,
+            interpolate_rate=interpolate_rate,
         )
 
         # Recover XYZ *positions* from HumanML3D vector representation
@@ -140,8 +159,11 @@ def main():
         if args.unconstrained:
             all_text += ['unconstrained'] * args.num_samples
         else:
-            text_key = 'text' if 'text' in model_kwargs['y'] else 'action_text'
-            all_text += model_kwargs['y'][text_key]
+            if args.text_prompt2 != '':
+                all_text += ['{:.5f}'.format(interpolate_rate)]
+            else:
+                text_key = 'text' if 'text' in model_kwargs['y'] else 'action_text'
+                all_text += model_kwargs['y'][text_key]
 
         all_motions.append(sample.cpu().numpy())
         all_lengths.append(model_kwargs['y']['lengths'].cpu().numpy())
@@ -203,8 +225,8 @@ def save_multiple_samples(args, out_path, row_print_template, all_print_template
     all_rep_save_file = row_file_template.format(sample_i)
     all_rep_save_path = os.path.join(out_path, all_rep_save_file)
     ffmpeg_rep_files = [f' -i {f} ' for f in rep_files]
-    hstack_args = f' -filter_complex hstack=inputs={args.num_repetitions}' if args.num_repetitions > 1 else ''
-    ffmpeg_rep_cmd = f'ffmpeg -y -loglevel warning ' + ''.join(ffmpeg_rep_files) + f'{hstack_args} {all_rep_save_path}'
+    stack_args = f' -filter_complex hstack=inputs={args.num_repetitions}' if args.num_repetitions > 1 else ''
+    ffmpeg_rep_cmd = f'ffmpeg -y -loglevel warning ' + ''.join(ffmpeg_rep_files) + f'{stack_args} {all_rep_save_path}'
     os.system(ffmpeg_rep_cmd)
     print(row_print_template.format(caption, sample_i, all_rep_save_file))
     sample_files.append(all_rep_save_path)
@@ -214,9 +236,9 @@ def save_multiple_samples(args, out_path, row_print_template, all_print_template
         all_sample_save_path = os.path.join(out_path, all_sample_save_file)
         print(all_print_template.format(sample_i - len(sample_files) + 1, sample_i, all_sample_save_file))
         ffmpeg_rep_files = [f' -i {f} ' for f in sample_files]
-        vstack_args = f' -filter_complex vstack=inputs={len(sample_files)}' if len(sample_files) > 1 else ''
+        stack_args = f' -filter_complex vstack=inputs={len(sample_files)}' if len(sample_files) > 1 else ''
         ffmpeg_rep_cmd = f'ffmpeg -y -loglevel warning ' + ''.join(
-            ffmpeg_rep_files) + f'{vstack_args} {all_sample_save_path}'
+            ffmpeg_rep_files) + f'{stack_args} {all_sample_save_path}'
         os.system(ffmpeg_rep_cmd)
         sample_files = []
     return sample_files
