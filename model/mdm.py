@@ -94,7 +94,7 @@ class MDM(nn.Module):
                     self.encode_text = self.clip_encode_text
                 elif self.encode_type == 'bert':
                     print('Loading DISTILBERT...')
-                    self.model_path = 'model/deps/distilbert-base-uncased'
+                    self.model_path = 'distilbert-base-uncased'
                     self.bert_model = self.load_and_freeze_bert(self.model_path)
                     bert_dim = self.bert_model.text_model.config.hidden_size
                     max_text_len = 20
